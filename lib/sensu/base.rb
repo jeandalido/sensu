@@ -1,11 +1,13 @@
 require 'rubygems'
 
 gem 'oj', '2.0.9'
+gem 'yajl-ruby'
 gem 'eventmachine', '1.0.3'
 
 require 'time'
 require 'uri'
 require 'oj'
+require 'yajl'
 
 require File.join(File.dirname(__FILE__), 'constants')
 require File.join(File.dirname(__FILE__), 'utilities')

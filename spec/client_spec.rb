@@ -214,4 +214,34 @@ describe 'Sensu::Client' do
       end
     end
   end
+
+  it 'can accept stream of external result input via sockets' do
+    async_wrapper do
+      result_queue do |queue|
+        @client.setup_rabbitmq
+        @client.setup_sockets
+        timer(1) do
+          EM::connect('127.0.0.1', 3030, nil) do |socket|
+            socket.send_data('{"name": "tcp1", "output": "tcp", "status": 1}')
+            socket.send_data('{"name": "tcp2", "output": "tcp", "status": 1}')
+            socket.close_connection_after_writing
+          end
+          EM::open_datagram_socket('127.0.0.1', 0, nil) do |socket|
+            data = '{"name": "udp1", "output": "udp", "status": 1}'
+            socket.send_datagram(data, '127.0.0.1', 3030)
+            socket.close_connection_after_writing
+          end
+        end
+        expected = ['tcp1', 'tcp2', 'udp1']
+        queue.subscribe do |payload|
+          result = Oj.load(payload)
+          result[:client].should eq('i-424242')
+          expected.delete(result[:check][:name]).should_not be_nil
+          if expected.empty?
+            async_done
+          end
+        end
+      end
+    end
+  end
 end

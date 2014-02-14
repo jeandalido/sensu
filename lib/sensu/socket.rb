@@ -2,9 +2,51 @@ module Sensu
   class Socket < EM::Connection
     attr_accessor :logger, :settings, :amq, :reply
 
+    def post_init
+      @parser = Yajl::Parser.new(:symbolize_keys => true)
+      @parser.on_parse_complete = method(:object_parsed)
+    end
+
     def respond(data)
       unless @reply == false
         send_data(data)
+      end
+    end
+
+    def object_parsed(object)
+      @logger.debug('socket received json data', {
+        :data => object.to_s
+      })
+      begin
+        object[:issued] = Time.now.to_i
+        object[:status] ||= 0
+        validates = [
+          object[:name] =~ /^[\w\.-]+$/,
+          object[:output].is_a?(String),
+          object[:status].is_a?(Integer)
+        ].all?
+        if validates
+          payload = {
+            :client => @settings[:client][:name],
+            :check => object
+          }
+          @logger.info('publishing check result', {
+            :payload => payload
+          })
+          @amq.direct('results').publish(Oj.dump(payload))
+          respond('ok')
+        else
+          @logger.warn('invalid check result', {
+            :check => check
+          })
+          respond('invalid')
+        end
+      rescue Oj::ParseError => error
+        @logger.warn('check result must be valid json', {
+          :data => data,
+          :error => error.to_s
+        })
+        respond('invalid')
       end
     end
 
@@ -16,41 +58,7 @@ module Sensu
         @logger.debug('socket received ping')
         respond('pong')
       else
-        @logger.debug('socket received data', {
-          :data => data
-        })
-        begin
-          check = Oj.load(data)
-          check[:issued] = Time.now.to_i
-          check[:status] ||= 0
-          validates = [
-            check[:name] =~ /^[\w\.-]+$/,
-            check[:output].is_a?(String),
-            check[:status].is_a?(Integer)
-          ].all?
-          if validates
-            payload = {
-              :client => @settings[:client][:name],
-              :check => check
-            }
-            @logger.info('publishing check result', {
-              :payload => payload
-            })
-            @amq.direct('results').publish(Oj.dump(payload))
-            respond('ok')
-          else
-            @logger.warn('invalid check result', {
-              :check => check
-            })
-            respond('invalid')
-          end
-        rescue Oj::ParseError => error
-          @logger.warn('check result must be valid json', {
-            :data => data,
-            :error => error.to_s
-          })
-          respond('invalid')
-        end
+        @parser << data
       end
     end
   end
